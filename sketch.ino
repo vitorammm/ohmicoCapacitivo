@@ -1,66 +1,36 @@
-import numpy as np  # Libreria per i calcoli
-import matplotlib.pyplot as plt  # Libreria per i grafici
-import serial  # Per comunicare con Arduino
-import time
+const int pwmPin = 9;        // Pin PWM per generare il segnale
+const int pinVC = A1;        // Pin analogico per leggere la tensione sul condensatore
+const int samples = 300;     // Numero di campioni del ciclo sinusoidale
+const int maxPWM = 255;      // Valore massimo PWM
+const int delayMicro = 1000; // 1 ms = 1 kHz di campionamento
 
-# === Configurazione connessione con Arduino ===
-porta = "/dev/tty.usbmodemF412FA9F963C2"  # Cambia in base al tuo sistema
-velocita = 115200
-arduino = serial.Serial(porta, velocita)
-time.sleep(2)  # Aspetta che Arduino sia pronto
+void setup() {
+  pinMode(pwmPin, OUTPUT);
+  Serial.begin(115200);
+}
 
-# === Parametri iniziali ===
-capacita = 100e-6  # 100 microfarad
-numero_campioni = 300
-tempo = np.arange(numero_campioni)
+void loop() {
+  for (int i = 0; i < samples; i++) {
+    // Calcolo l’angolo per la sinusoide
+    float angle = 2.0 * PI * 3 * i / samples;
 
-# === Lettura dati da Arduino ===
-dati_grezzi = []
-while len(dati_grezzi) < numero_campioni:
-    dati_grezzi.append(arduino.readline().decode('ascii').strip())
+    // Calcolo tensione PWM teorica tra 0 e 5V
+    float tensionePWM = (sin(angle) + 1.0) / 2.0 * 5.0;
 
-tensione_misurata = [float(val) for val in dati_grezzi]
+    // Converto in duty cycle PWM (0–255)
+    int pwmValue = int((tensionePWM / 5.0) * maxPWM);
+    analogWrite(pwmPin, pwmValue);
 
-# === Simulazione segnali ideali ===
-tensione_simulata =  2.5 + 2.5 * np.sin(2 * np.pi * 3 * tempo / numero_campioni)
-corrente_simulata =  2.5 * np.sin(2 * np.pi * 3 * tempo / numero_campioni + np.pi/2)
+    // Leggo la tensione reale sul condensatore (VC)
+    int rawVC = analogRead(pinVC);
+    float VC = rawVC * 5.0 / 1023.0;
 
-# === Calcolo corrente reale dal segnale misurato ===
-from scipy.signal import savgol_filter
-tensione_filtrata = savgol_filter(tensione_misurata, window_length=11, polyorder=2)
-corrente_calcolata = capacita * np.gradient(tensione_filtrata)
-corrente_calcolata -= np.mean(corrente_calcolata)  # Rimuove offset
+    // Stampo solo: ; VC
+    Serial.println(VC, 2);  // 3 cifre decimali
 
-# === Selezione porzione utile del segnale ===
-inizio = 0
-fine = 300
-tempo_tagliato = tempo[inizio:fine]
-tensione_sim_tagliata = tensione_simulata[inizio:fine]
-corrente_sim_tagliata = corrente_simulata[inizio:fine] 
-tensione_mis_tagliata = np.array(tensione_misurata)[inizio:fine]
-corrente_calc_tagliata = corrente_calcolata[inizio:fine]
+    delayMicroseconds(delayMicro);
+  }
 
-# === Scala la corrente per confrontarla visivamente ===
-corrente_microA = corrente_calc_tagliata * 1e6
-ampiezza_tensione = np.max(tensione_sim_tagliata) - np.min(tensione_sim_tagliata)
-ampiezza_corrente = np.max(corrente_microA) - np.min(corrente_microA)
-fattore_scala = ampiezza_tensione / ampiezza_corrente
-corrente_scalata = corrente_microA * fattore_scala
-
-# === Plot dei segnali ===
-plt.figure()
-plt.plot(tempo_tagliato, tensione_sim_tagliata, 'r-', label='Tensione Simulata')
-#plt.plot(tempo_tagliato, corrente_sim_tagliata, 'b-', label='Corrente Simulata (sfasata)')
-plt.plot(tempo_tagliato, tensione_mis_tagliata, 'g--', label='Tensione Misurata da Arduino')
-#plt.plot(tempo_tagliato, corrente_scalata, 'm--', label='Corrente Calcolata')
-
- 
-#Abbellimenti vari
-plt.xlabel('Tempo [campioni]')
-plt.ylabel('Ampiezza')
-plt.title('Segnali misurati e simulati')
-plt.legend()
-plt.grid()
-plt.ylim(-5, 8)
-plt.tight_layout()
-plt.show()
+  analogWrite(pwmPin, 0);  // Spegne il segnale PWM
+  while (true);            // Fine esperimento
+}
