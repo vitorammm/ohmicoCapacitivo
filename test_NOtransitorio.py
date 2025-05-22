@@ -1,83 +1,66 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.ndimage import shift
-import serial
+import numpy as np  # Libreria per i calcoli
+import matplotlib.pyplot as plt  # Libreria per i grafici
+import serial  # Per comunicare con Arduino
 import time
 
-#configurazione
-porta_seriale = "/dev/tty.usbmodemF412FA9F963C2"
-velocita_comunicazione = 115200
-arduino = serial.Serial(porta_seriale, velocita_comunicazione)
-time.sleep(2)
-campioni = 300
+# === Configurazione connessione con Arduino ===
+porta = "/dev/tty.usbmodemF412FA9F963C2"  # Cambia in base al tuo sistema
+velocita = 115200
+arduino = serial.Serial(porta, velocita)
+time.sleep(2)  # Aspetta che Arduino sia pronto
 
+# === Parametri iniziali ===
+capacita = 100e-6  # 100 microfarad
+numero_campioni = 300
+tempo = np.arange(numero_campioni)
 
-data  = []
+# === Lettura dati da Arduino ===
+dati_grezzi = []
+while len(dati_grezzi) < numero_campioni:
+    dati_grezzi.append(arduino.readline().decode('ascii').strip())
 
-while len(data) < campioni:
-    data.append(arduino.readline().decode('ascii').strip())
-    print(data)
+tensione_misurata = [float(val) for val in dati_grezzi]
 
-v_meas = []
-for i in range(len(data)):
-    v_meas.append(float(data[i]))
-    print(v_meas)
+# === Simulazione segnali ideali ===
+tensione_simulata =  2.5 + 2.5 * np.sin(2 * np.pi * 3 * tempo / numero_campioni)
+corrente_simulata =  2.5 + 2.5 * np.sin(2 * np.pi * 3 * tempo / numero_campioni + np.pi/2)
 
-# === Parametri ===
-C = 100e-6
-length = 300
-t = np.arange(length)
-
-
-# === Segnali ===
-v_simulata = 2.5 + 2.5 * np.sin(2 * np.pi * 3 * t / length)                    
-i_simulata = 2.5 + 2.5 * np.sin(2 * np.pi * 3 * t / length + np.pi/2)                                        
-v_misurata = np.array(v_meas[:length])
-
-
-
-
+# === Calcolo corrente reale dal segnale misurato ===
 from scipy.signal import savgol_filter
-v_smooth = savgol_filter(v_misurata, window_length=11, polyorder=2)
-i_calcolata = C * np.gradient(v_smooth)
-i_calcolata = i_calcolata - np.mean(i_calcolata)
+tensione_filtrata = savgol_filter(tensione_misurata, window_length=11, polyorder=2)
+corrente_calcolata = capacita * np.gradient(tensione_filtrata)
+corrente_calcolata -= np.mean(corrente_calcolata)  # Rimuove offset
+
+# === Selezione porzione utile del segnale ===
+inizio = 50
+fine = 300
+tempo_tagliato = tempo[inizio:fine]
+tensione_sim_tagliata = tensione_simulata[inizio:fine]
+corrente_sim_tagliata = corrente_simulata[inizio:fine]
+tensione_mis_tagliata = np.array(tensione_misurata)[inizio:fine]
+corrente_calc_tagliata = corrente_calcolata[inizio:fine]
+
+# === Scala la corrente per confrontarla visivamente ===
+corrente_microA = corrente_calc_tagliata * 1e6
+ampiezza_tensione = np.max(tensione_sim_tagliata) - np.min(tensione_sim_tagliata)
+ampiezza_corrente = np.max(corrente_microA) - np.min(corrente_microA)
+fattore_scala = ampiezza_tensione / ampiezza_corrente
+corrente_scalata = corrente_microA * fattore_scala
+
+# === Plot dei segnali ===
+plt.figure()
+plt.plot(tempo_tagliato, tensione_sim_tagliata, 'r-', label='Tensione Simulata')
+plt.plot(tempo_tagliato, corrente_sim_tagliata, 'b-', label='Corrente Simulata (sfasata)')
+plt.plot(tempo_tagliato, tensione_mis_tagliata, 'g--', label='Tensione Misurata da Arduino')
+plt.plot(tempo_tagliato, corrente_scalata, 'm--', label='Corrente Calcolata')
 
 
- 
 
-# Applichiamo il filtro hard: manteniamo solo i campioni da 50 in poi fino a 300 (max disponibile nel segnale)
-start_idx = 50
-end_idx = 300  # max length
-
-# Slice dei dati
-t_cut = t[start_idx:end_idx]
-v_simulata_cut = v_simulata[start_idx:end_idx]
-i_simulata_cut = i_simulata[start_idx:end_idx]
-v_misurata_cut = v_misurata[start_idx:end_idx]
-i_calcolata_cut = i_calcolata[start_idx:end_idx]
-
-# Scala la corrente in µA
-i_scaled = i_calcolata_cut * 1e6  # ora in µA
-
-# Normalizza sul range della tensione
-v_range = np.max(v_simulata_cut) - np.min(v_simulata_cut)
-i_range = np.max(i_scaled) - np.min(i_scaled)
-scaling_factor = v_range / i_range
-i_scaled_final = i_scaled * scaling_factor
-
-# Plot
-fig, ax1 = plt.subplots()
-
-ax1.plot(t_cut, v_simulata_cut, 'r-', label='v_simulata')
-ax1.plot(t_cut, i_simulata_cut, 'b-', label='v_simulata sfasata 90°') 
-ax1.plot(t_cut, v_misurata_cut, 'g--', label='v_misurata')
-ax1.plot(t_cut, i_scaled_final, 'm--', label='i_calcolata scalata')
-
-ax1.set_ylabel('Segnali comparabili (V o corrente scalata)')
-ax1.set_xlabel('Tempo [campioni]')
-ax1.set_ylim(-5, 8)
+plt.xlabel('Tempo [campioni]')
+plt.ylabel('Ampiezza')
+plt.title('Segnali misurati e simulati (Vito Ramunno)')
 plt.legend()
 plt.grid()
-plt.title('Segnali comparabili su stesso asse (vito ramunno)')
+plt.ylim(-5, 8)
 plt.tight_layout()
 plt.show()
